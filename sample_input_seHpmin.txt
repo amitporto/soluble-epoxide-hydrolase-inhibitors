@@ -1,0 +1,172 @@
+env pymol="C:\pymol\PyMOLWin.exe" 
+env babel_path="C:\open3dtools\bin"
+env gnuplot="C:\Program Files\gnuplot\bin\gnuplot.exe"
+
+#The following command imports a SDF dataset
+import type=sdf file=C:\open3dtools\open3dqsar\example\MM\data5_seHpmin_out.sdf
+
+#The following command sets a grid box with a 2.0
+#angstrom step size and a 5.0 angstrom outgap
+#around the molecules
+box step=2.0
+
+#The following command computes a steric field
+calc_field type=vdw
+
+#The following command computes an ESP field
+calc_field type=mm_ele
+
+#The following commands set min/max cutoffs on the VdW field
+cutoff type=max level=30.0
+cutoff type=min level=-30.0
+
+#The following command imports a text file with activities
+#the first line must be a label with the variable name
+#(e.g., affinity, or activity)
+#a multi-column file can be read
+#to perform regression over multiple
+#dependent variables
+import type=dependent file=C:\open3dtools\open3dqsar\example\MM\data5_seHpmin_biol.txt
+
+#The following extracts compounds having ID
+#7, 10, 15, 25, 37, 40, 42, 46, 55
+#to use them as an external test set
+#set id_list=3,8,13,19,23,28,33 attribute=testset
+#best
+#set id_list=1,6,12,18,25,29,34,39,45,51,59,65,70,74,79,84,89,96,99,103,108,116,120,124,128,136,139,149,158,163,166,170,173,178,181 attribute=testset
+set id_list=3,6,12,18,25,28,33,35,39,45,51,53,62,72,74,79,85,89,96,99,105,109,116,120,124,128,136,139,149,156,163,166,170,173,178,181 attribute=testset
+#set id_list=3,7,13,19,26,30,34,41,46,52,58,63,74,79,85,89,96,99,105,109,118,120,124,128,136,139,142,149,156,163,166,170,175,178,182 attribute=testset
+#set id_list=5,19,23,24,28,30,32,36,45,46,65,67,68,73,76,80,81,82,84,94,102,105,110,116,126,127,129,131,138,149,150,155,156,159,170,172,181 attribute=testset
+#best model
+#set id_list=1,4,5,14,21,25,32 attribute=testset
+#set id_list=3,8,12,16,21,25,31 attribute=testset
+#set id_list=4,9,13,19,24,29,35 attribute=testset
+
+
+#Saves the file after having imported
+#both independent and dependent variables
+save file=binding.dat
+
+#The following zeroes both negative and positive values
+#below a threshold of 0.05 for both probes
+zero type=all level=0.05
+
+#The following removes X variables with a SD
+#below a threshold of 0.1
+sdcut level=2.0
+
+#The following removes n-level variables
+#of 2nd, 3rd and 4th level from both fields
+nlevel
+remove_x_vars type=nlevel
+
+#The following command performs
+#Block Unscaled Weighting
+scale_x_vars type=buw
+
+#The following command performs
+#PLS analysis extracting 5 PCs
+pls pc=5 calc_leverage=YES calc_field_contrib=YES 
+
+#The following command performs
+#external prediction on the 9-compound
+#test set previously extracted using 5 PCs
+predict pc=5 file=ext_pred_results.sdf
+
+#The following commands performs
+#leave-one-out, leave-two-out,
+#leave-many-out cross-validation
+#with 5 PCs
+cv pc=5 type=loo file=loo_results.sdf
+cv pc=5 type=lto file=lto_results.sdf
+cv pc=5 type=lmo runs=20 groups=5 file=lmo_results.sdf
+
+#The following commands performs
+#Smart Region Definition (SRD) variable grouping
+srd pc=5 collapse=yes critical_distance=1.0 \
+	collapse_distance=2.0 type=weights
+	
+#Now we save an intermediate file
+#after SRD
+save file=binding_after_srd.dat
+
+#The following commands performs
+#FFD variable selection
+ffdsel pc=5 type=lmo runs=20 \
+	percent_dummies=20 use_srd_groups=yes \
+	combination_variable_ratio=1.0 fold_over=no
+
+#Now we save an intermediate file
+#after FFD variable selection
+save file=binding_after_ffdsel.dat
+
+#The following commands removes
+#variable selected as unimportant
+#by FFDSEL
+remove_x_vars type=ffdsel
+
+#Now let's recalculate a model
+#after variable reduction
+pls pc=5 calc_leverage=YES calc_field_contrib=YES file=pls_results.sdf
+
+#And let's challenge its performance
+#through LOO, LTO, LMO cross-validation
+cv pc=5 type=loo
+cv pc=5 type=lto
+cv pc=5 type=lmo groups=5 runs=20
+
+#And also through external prediction
+predict pc=5 calc_leverage=YES
+
+#Now we save a grid file
+#with PLS pseudo-coefficients
+#for visualization in MOE, PyMOL
+#and Maestro
+export type=coefficients pc=3 file=ffdsel_coefficients \
+	format=insight interpolate=3
+export type=coefficients pc=3 file=ffdsel_coefficients \
+	format=moe interpolate=3
+export type=coefficients pc=3 file=ffdsel_coefficients \
+	format=maestro  interpolate=3
+
+#Now we reload the data file
+#before we carried out FFDSEL
+load file=binding_after_srd.dat
+pls pc=5 calc_leverage=YES calc_field_contrib=YES 
+
+#And we attempt a different variable selection
+#procedure, namely IVE-PLS
+uvepls pc=5 type=lmo \
+	use_srd_groups=no \
+	uve_alpha=90 uve_m=y ive=y \
+	save_ram=n ive_percent_limit=50
+
+#Now we save an intermediate file
+#after IVE-PLS variable selection
+save file=binding_after_uvepls.dat
+
+remove_x_vars type=uvepls
+
+#Now let's recalculate a model
+#after variable reduction
+pls pc=5 calc_leverage=YES calc_field_contrib=YES
+
+#And let's challenge its performance
+#through LOO, LTO, LMO cross-validation
+cv pc=5 type=loo file=loo_results_uvepls.sdf
+cv pc=5 type=lto
+cv pc=5 type=lmo groups=5 runs=20
+
+#And also through external prediction
+predict pc=5 calc_leverage=YES file=ext_pred_results.sdf
+
+#Now we save a grid file
+#with PLS pseudo-coefficients
+#for visualization in MOE, PyMOL
+#and Maestro
+export type=coefficients pc=4 file=uvepls_coefficients \
+	format=insight interpolate=4
+export type=coefficients pc=4 file=uvepls_coefficients \
+	format=moe interpolate=4
+export type=coefficients pc=4 file=uvepls_coefficients \
+	format=maestro interpolate=4
